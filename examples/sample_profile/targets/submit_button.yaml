@@ -1,0 +1,9 @@
+id: submit_button
+display_name: Submit Button
+kind: button
+template_path: targets/submit_button.png
+min_confidence: 0.88
+search_region: active_screen
+click_offset: center
+created_at: "2026-07-09T12:00:00"
+updated_at: "2026-07-09T12:00:00"

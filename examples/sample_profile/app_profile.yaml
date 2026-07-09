@@ -1,0 +1,7 @@
+id: sample_profile
+display_name: Sample Profile (Demo Target App)
+description: >
+  Example profile for the bundled demo target app (run `rpa-demo-app`).
+  Copy this folder into your workspace to try Local RPA Studio end to end.
+created_at: "2026-07-09T12:00:00"
+updated_at: "2026-07-09T12:00:00"

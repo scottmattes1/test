@@ -1,0 +1,21 @@
+id: demo_submit_form
+display_name: Demo Submit Form
+description: Waits for the demo app's Submit button, clicks it, pastes text, waits.
+steps:
+  - id: wait_for_button
+    action: wait_for_target
+    target_id: submit_button
+    timeout_seconds: 10
+  - id: click_button
+    action: click_target
+    target_id: submit_button
+    timeout_seconds: 10
+  - id: paste_value
+    action: paste_text
+    text: "Hello from Local RPA Studio"
+  - id: final_wait
+    action: wait_seconds
+    seconds: 1
+  - id: done
+    action: notify
+    message: "Demo workflow finished"
