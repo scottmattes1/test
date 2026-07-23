@@ -9,3 +9,7 @@ venv/
 .ruff_cache/
 workspace/
 .DS_Store
+
+# AR analytics: raw financial exports and derived outputs are sensitive
+# (customer names, balances, credit limits) — never commit them.
+ar_analytics/data/
