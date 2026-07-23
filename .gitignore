@@ -13,3 +13,6 @@ workspace/
 # AR analytics: raw financial exports and derived outputs are sensitive
 # (customer names, balances, credit limits) — never commit them.
 ar_analytics/data/
+
+# local ML venv for AR analytics experiment
+.venv-ml/
