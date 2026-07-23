@@ -35,9 +35,9 @@ HERE = Path(__file__).resolve().parent
 RAW = HERE / "data" / "raw"
 OUT = HERE / "data" / "out"
 
-HORIZON = 30       # forecast this many days ahead
-HOLDOUT = 143      # size of the test window (matches the prior ablation)
-SPIKE_K = 2.0      # a "spike day" exceeds mean + SPIKE_K * std of the series
+HORIZONS = (7, 14, 30)  # forecast horizons to sweep (days ahead)
+HOLDOUT = 143           # size of the test window (matches the prior ablation)
+SPIKE_K = 2.0           # a "spike day" exceeds mean + SPIKE_K * std of the series
 
 INVOICE_FILES = [
     "ar_invoices1_1.csv", "ar_invoices1_2.csv",
@@ -92,15 +92,16 @@ def mean_impute(deposits: pd.Series, is_spike: pd.Series) -> pd.Series:
 # --- model -------------------------------------------------------------------
 
 
-def build_design(target: pd.Series, holidays: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
-    """Direct 30-day-ahead design matrix (cadence as-of origin t-HORIZON)."""
+def build_design(target: pd.Series, holidays: pd.DataFrame,
+                 horizon: int) -> tuple[pd.DataFrame, pd.Series]:
+    """Direct h-day-ahead design matrix (cadence as-of origin t-horizon)."""
     dep = target
     feat = pd.DataFrame(index=dep.index)
-    feat["lag_h"] = dep.shift(HORIZON)
+    feat["lag_h"] = dep.shift(horizon)
     for w in (7, 14, 30, 60):
-        feat[f"roll{w}_mean"] = dep.shift(HORIZON).rolling(w).mean()
-        feat[f"roll{w}_sum"] = dep.shift(HORIZON).rolling(w).sum()
-    feat["roll7_std"] = dep.shift(HORIZON).rolling(7).std()
+        feat[f"roll{w}_mean"] = dep.shift(horizon).rolling(w).mean()
+        feat[f"roll{w}_sum"] = dep.shift(horizon).rolling(w).sum()
+    feat["roll7_std"] = dep.shift(horizon).rolling(7).std()
 
     idx = feat.index
     for d in range(6):  # day-of-week one-hot, Sun as baseline
@@ -116,9 +117,10 @@ def build_design(target: pd.Series, holidays: pd.DataFrame) -> tuple[pd.DataFram
     return data.drop(columns=["y"]), data["y"]
 
 
-def fit_predict(train_target: pd.Series, holidays: pd.DataFrame) -> pd.Series:
+def fit_predict(train_target: pd.Series, holidays: pd.DataFrame,
+                horizon: int) -> pd.Series:
     """Fit on all but the last HOLDOUT days; return holdout predictions."""
-    X, y = build_design(train_target, holidays)
+    X, y = build_design(train_target, holidays, horizon)
     split = len(y) - HOLDOUT
     scaler = StandardScaler().fit(X.iloc[:split])
     model = Ridge(alpha=10.0).fit(scaler.transform(X.iloc[:split]), y.iloc[:split])
@@ -168,6 +170,32 @@ def make_graph(path: Path, title: str, actuals: pd.Series, pred: pd.Series,
 # --- main --------------------------------------------------------------------
 
 
+def make_comparison(path: Path, rows: list[dict]) -> None:
+    df = pd.DataFrame(rows).sort_values("horizon")
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.plot(df["horizon"], df["rmse_unaltered"] / 1e3, "o-", color="#2563eb", lw=2,
+            ms=9, label="vs full unaltered actuals")
+    ax.plot(df["horizon"], df["rmse_imputed"] / 1e3, "s--", color="#dc2626", lw=2,
+            ms=9, label="vs mean-imputed actuals")
+    for _, r in df.iterrows():
+        ax.annotate(d(r["rmse_unaltered"]), (r["horizon"], r["rmse_unaltered"] / 1e3),
+                    textcoords="offset points", xytext=(0, 10), ha="center", fontsize=9,
+                    color="#1e3a8a")
+        ax.annotate(d(r["rmse_imputed"]), (r["horizon"], r["rmse_imputed"] / 1e3),
+                    textcoords="offset points", xytext=(0, -16), ha="center", fontsize=9,
+                    color="#991b1b")
+    ax.set_title("Holdout RMSE by forecast horizon  ·  no cap  ·  143-day holdout",
+                 fontsize=13, fontweight="bold")
+    ax.set_xlabel("Forecast horizon (days ahead)")
+    ax.set_ylabel("RMSE (\\$ thousands)")
+    ax.set_xticks(df["horizon"])
+    ax.grid(True, alpha=0.25)
+    ax.legend(fontsize=10)
+    fig.tight_layout()
+    fig.savefig(path, dpi=140)
+    plt.close(fig)
+
+
 def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
     deposits = load_daily_deposits()            # full, unaltered, uncapped
@@ -175,38 +203,37 @@ def main() -> int:
     is_spike, thr = spike_mask(deposits)
     imputed = mean_impute(deposits, is_spike)   # spike days -> weekday mean
 
-    # One model, trained on the mean-imputed series; same predictions scored twice.
-    pred = fit_predict(imputed, holidays)
-    rmse_unaltered = rmse(pred, deposits)
-    rmse_imputed = rmse(pred, imputed)
-
-    n_hold_spikes = int(is_spike.loc[pred.index].sum())
-    make_graph(
-        OUT / "graph1_vs_unaltered_actuals.png",
-        "AR deposit forecast (30-day) vs. FULL UNALTERED ACTUALS  ·  no cap  ·  "
-        "143-day holdout",
-        deposits, pred, is_spike, rmse_unaltered,
-        "Actual deposits (unaltered, uncapped)", "#2563eb")
-    make_graph(
-        OUT / "graph2_vs_mean_imputed_actuals.png",
-        "AR deposit forecast (30-day) vs. MEAN-IMPUTED ACTUALS  ·  no cap  ·  "
-        "143-day holdout",
-        imputed, pred, is_spike, rmse_imputed,
-        "Actual deposits (spike days mean-imputed)", "#dc2626")
-
-    pd.DataFrame([
-        {"ground_truth": "full_unaltered_actuals", "rmse": rmse_unaltered},
-        {"ground_truth": "mean_imputed_actuals", "rmse": rmse_imputed},
-    ]).to_csv(OUT / "spike_experiment_metrics.csv", index=False)
-
     print(f"Daily deposits: {deposits.index.min().date()} .. {deposits.index.max().date()} "
           f"({len(deposits)} days), no cap")
-    print(f"Spike threshold (mean+{SPIKE_K:g}sd): ${thr:,.0f} -> "
-          f"{int(is_spike.sum())} spike days total, {n_hold_spikes} in holdout")
-    print(f"RMSE vs FULL UNALTERED actuals: ${rmse_unaltered:,.0f}")
-    print(f"RMSE vs MEAN-IMPUTED actuals:   ${rmse_imputed:,.0f}")
-    print(f"Wrote graph1_vs_unaltered_actuals.png, graph2_vs_mean_imputed_actuals.png, "
-          f"spike_experiment_metrics.csv")
+    print(f"Spike threshold (mean+{SPIKE_K:g}sd): ${thr:,.0f} -> {int(is_spike.sum())} "
+          f"spike days total\n")
+
+    rows = []
+    for h in HORIZONS:
+        # One model per horizon, trained on the imputed series; scored two ways.
+        pred = fit_predict(imputed, holidays, h)
+        r_un = rmse(pred, deposits)
+        r_im = rmse(pred, imputed)
+        rows.append({"horizon": h, "rmse_unaltered": r_un, "rmse_imputed": r_im})
+
+        make_graph(
+            OUT / f"graph_h{h:02d}_vs_unaltered_actuals.png",
+            f"AR deposit forecast ({h}-day) vs. FULL UNALTERED ACTUALS  ·  no cap  ·  "
+            "143-day holdout",
+            deposits, pred, is_spike, r_un,
+            "Actual deposits (unaltered, uncapped)", "#2563eb")
+        make_graph(
+            OUT / f"graph_h{h:02d}_vs_mean_imputed_actuals.png",
+            f"AR deposit forecast ({h}-day) vs. MEAN-IMPUTED ACTUALS  ·  no cap  ·  "
+            "143-day holdout",
+            imputed, pred, is_spike, r_im,
+            "Actual deposits (spike days mean-imputed)", "#dc2626")
+        print(f"horizon {h:>2}d:  RMSE vs unaltered ${r_un:>12,.0f}   "
+              f"vs mean-imputed ${r_im:>12,.0f}")
+
+    make_comparison(OUT / "horizon_comparison.png", rows)
+    pd.DataFrame(rows).to_csv(OUT / "horizon_comparison.csv", index=False)
+    print("\nWrote per-horizon graphs + horizon_comparison.png / .csv")
     return 0
 
 

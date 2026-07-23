@@ -47,6 +47,26 @@ days are exactly the ones that matter, so they should be modeled separately
 (spike-timing classification / invoice-level settlement) rather than smoothed
 away.
 
+## Forecast horizon sweep (7 / 14 / 30 days)
+
+The prior thread proposed shortening the horizon to make spike timing more
+knowable. It does not help — RMSE is flat across horizons (all differences are
+well inside the ~$49k holdout SE):
+
+| Horizon | RMSE vs unaltered actuals | RMSE vs mean-imputed actuals |
+|---|---|---|
+| 7 days | $734,612 | $247,170 |
+| 14 days | $737,364 | $250,562 |
+| 30 days | **$728,673** | **$240,726** |
+
+Shortening the horizon buys nothing here: normal-day deposits are weekly-seasonal
+and about equally predictable 7 or 30 days out, and the spike days — which own
+the unaltered-actuals error — are driven by large invoices settling, timing a
+daily-aggregate cadence model can't see at *any* of these horizons. The lever is
+not horizon length; it is modeling spikes at the invoice level (due/discount
+dates, per-customer settlement behavior), where knowing which large invoices are
+due in the next 7 days is genuinely informative.
+
 ## Note on scale
 
 Uncapped RMSE vs. unaltered actuals (**$728,673**) is close to the prior thread's
