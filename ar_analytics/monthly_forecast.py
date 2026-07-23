@@ -42,6 +42,10 @@ FIRST_MONTH = "2024-10-01"   # drop Aug/Sep 2024 ramp-up
 TEST_MONTHS = 12             # size of the backtest window
 
 
+def d(v: float) -> str:  # literal $ (escaped so matplotlib doesn't parse mathtext)
+    return f"\\${v:,.0f}"
+
+
 def load_invoices() -> pd.DataFrame:
     cols = ["WHENPOSTED", "WHENDUE", "WHENPAID", "TOTALENTERED", "TOTALPAID"]
     inv = pd.concat([pd.read_csv(RAW / f, usecols=cols, low_memory=False)
@@ -159,18 +163,14 @@ def main() -> int:
     bt.to_csv(OUT / "monthly_backtest.csv")
     mt.to_csv(OUT / "monthly_metrics.csv", index=False)
 
-    # --- chart ---
+    # --- chart: actuals + regression model only ---
+    reg = mt.loc[mt["model"] == "pipeline_regress"].iloc[0]
     fig, ax = plt.subplots(figsize=(14, 7))
     ax.plot(monthly.index, monthly["deposits"] / 1e6, color="#111827", lw=2,
-            marker="o", ms=4, label="Actual monthly deposits")
-    palette = {"pipeline_regress": "#dc2626", "pipeline_ratio": "#2563eb",
-               "trailing_3m": "#059669", "seasonal_naive": "#9333ea"}
-    for name in MODELS:
-        mape = mt.loc[mt["model"] == name, "MAPE_%"].iloc[0]
-        style = "-" if name == best else "--"
-        lw = 2.4 if name == best else 1.3
-        ax.plot(bt.index, bt[name] / 1e6, style, color=palette[name], lw=lw, alpha=0.9,
-                label=f"{name}  (MAPE {mape:.1f}%)" + ("  ← best" if name == best else ""))
+            marker="o", ms=5, label="Actual monthly deposits")
+    ax.plot(bt.index, bt["pipeline_regress"] / 1e6, color="#dc2626", lw=2.6,
+            marker="s", ms=5, label=f"Pipeline regression forecast  (MAPE "
+            f"{reg['MAPE_%']:.1f}%, {reg['within_20%']:.0f}% within 20%)")
     ax.axvspan(bt.index.min(), bt.index.max(), color="#f59e0b", alpha=0.06)
     ax.axvline(bt.index.min(), color="#9ca3af", ls=":", lw=1)
     ax.text(bt.index.min(), ax.get_ylim()[1] * 0.97, "  12-month backtest →",
@@ -181,7 +181,11 @@ def main() -> int:
     ax.set_xlabel("Month")
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
     ax.grid(True, alpha=0.25)
-    ax.legend(loc="upper left", fontsize=9.5, framealpha=0.96)
+    ax.legend(loc="upper left", fontsize=10.5, framealpha=0.96)
+    ax.text(0.995, 0.03, f"MAPE {reg['MAPE_%']:.1f}%   ·   RMSE {d(reg['RMSE'])}",
+            transform=ax.transAxes, ha="right", va="bottom", fontsize=11,
+            fontweight="bold", family="monospace",
+            bbox=dict(boxstyle="round", fc="#fffbeb", ec="#f59e0b"))
     fig.tight_layout()
     fig.savefig(OUT / "monthly_forecast_chart.png", dpi=140)
     plt.close(fig)
